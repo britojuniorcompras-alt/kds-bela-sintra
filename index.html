@@ -103,6 +103,30 @@
   .acoes button.go{background:var(--verde);color:#06301A;border-color:transparent}
   .acoes button.ok{background:var(--pronto);color:#fff;border-color:transparent}
   .acoes button.x{background:none;color:var(--dim);flex:0 0 46px}
+
+  /* ---------- Tela de produção (somado) ---------- */
+  #producao{height:calc(100% - 58px);display:flex;flex-direction:column}
+  .pgrid{flex:1;display:grid;gap:12px;padding:12px;overflow-y:auto;
+    grid-template-columns:repeat(var(--pcols),1fr);align-content:start}
+  .prod{background:var(--card);border-radius:16px;padding:14px 16px;display:flex;
+    gap:16px;align-items:flex-start;border-left:9px solid var(--verde);
+    box-shadow:0 4px 14px #0007}
+  .prod.t-amarelo{border-left-color:var(--amarelo)}
+  .prod.t-vermelho{border-left-color:var(--vermelho)}
+  .pq{font-size:calc(30px + 2.4vw);font-weight:900;line-height:.9;color:var(--accent);
+    font-variant-numeric:tabular-nums;flex:none;min-width:1.4em;text-align:center}
+  .pinfo{flex:1;min-width:0;padding-top:4px}
+  .pnome{font-size:calc(13px + .85vw);font-weight:800;line-height:1.15;
+    margin-bottom:7px;word-break:break-word}
+  .pdet{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{background:#0004;border-radius:999px;padding:3px 10px;
+    font-size:calc(8px + .35vw);color:var(--dim);font-weight:600;white-space:nowrap}
+  .chip.alerta{background:#F5B82E22;color:var(--amarelo)}
+  .pespera{font-size:calc(9px + .35vw);color:var(--dim);margin-top:7px;
+    font-variant-numeric:tabular-nums}
+  .ptotal{padding:9px 16px;background:#0005;border-top:1px solid var(--line);
+    display:flex;align-items:center;gap:14px;font-size:14px}
+  .ptotal b{font-size:19px;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -110,7 +134,8 @@
 <div class="top">
   <div class="marca">KDS Cozinha<small>A Bela Sintra</small></div>
   <div class="modo">
-    <button id="bCoz" class="on">Cozinha</button>
+    <button id="bProd" class="on">Produção</button>
+    <button id="bCoz">Pedidos</button>
     <button id="bOpe">Operador</button>
   </div>
   <div class="spacer"></div>
@@ -118,8 +143,20 @@
   <div class="relogio" id="relogio">--:--</div>
 </div>
 
+<!-- ====== PRODUÇÃO (pratos somados) ====== -->
+<div id="producao">
+  <div class="pgrid" id="pgrid" style="--pcols:3"></div>
+  <div class="ptotal">
+    <span><b id="pPratos">0</b> pratos no total</span>
+    <span style="color:var(--dim)">·</span>
+    <span><b id="pTipos">0</b> itens diferentes</span>
+    <span style="color:var(--dim)">·</span>
+    <span><b id="pPedidos">0</b> pedidos abertos</span>
+  </div>
+</div>
+
 <!-- ====== COZINHA ====== -->
-<div id="cozinha">
+<div id="cozinha" style="display:none">
   <div class="grid" id="grid" style="--cols:4"></div>
   <div class="fila">
     <span><b id="nFila">0</b> na fila</span>
@@ -248,6 +285,57 @@ function render(){
   $('nVis').textContent     = mostra.length + (ordem.length > visiveis ? ' de ' + ordem.length : '');
 
   renderOperador();
+  renderProducao();
+}
+
+/* ====== PRODUÇÃO: soma os pratos iguais de todos os pedidos abertos ====== */
+function renderProducao(){
+  // só o que ainda precisa ser produzido
+  const abertos = pedidos.filter(p => p.status_cozinha === 'NOVO' || p.status_cozinha === 'EM_PREPARO');
+
+  const mapa = new Map();
+  abertos.forEach(p => (p.itens||[]).forEach(i => {
+    const chave = (i.nome||'').trim().toLowerCase();
+    if (!chave) return;
+    if (!mapa.has(chave)) mapa.set(chave, { nome:i.nome.trim(), total:0, det:[], maisAntigo:inicio(p) });
+    const g = mapa.get(chave);
+    const q = +i.quantidade || 1;
+    g.total += q;
+    g.maisAntigo = Math.min(g.maisAntigo, inicio(p));
+    const extras = [];
+    if (i.observacao) extras.push(i.observacao);
+    (i.adicionais||[]).forEach(a => extras.push('+ ' + (a.nome||a)));
+    g.det.push({ num:p.numero_pedido, qtd:q, extras });
+  }));
+
+  // o prato cujo pedido espera há mais tempo vem primeiro
+  const grupos = [...mapa.values()].sort((a,b) => a.maisAntigo - b.maisAntigo);
+
+  const g = $('pgrid');
+  g.style.setProperty('--pcols', grupos.length <= 2 ? 1 : grupos.length <= 6 ? 2 : 3);
+
+  g.innerHTML = grupos.length ? grupos.map(gr => {
+    const s = Math.max(0, Math.floor((Date.now() - gr.maisAntigo)/1000));
+    // cada pedido vira um selo; os que têm observação ficam em amarelo
+    const chips = gr.det.map(d => {
+      const t = `#${esc(d.num)}${d.qtd > 1 ? ' ('+d.qtd+')' : ''}` +
+                (d.extras.length ? ' · ' + esc(d.extras.join(' · ')) : '');
+      return `<span class="chip${d.extras.length ? ' alerta':''}">${t}</span>`;
+    }).join('');
+    return `<div class="prod ${faixa(s)}" data-ini="${gr.maisAntigo}">
+      <div class="pq">${gr.total % 1 ? gr.total.toFixed(1) : gr.total}</div>
+      <div class="pinfo">
+        <div class="pnome">${esc(gr.nome)}</div>
+        <div class="pdet">${chips}</div>
+        <div class="pespera">mais antigo esperando <b data-crono>${mmss(s)}</b></div>
+      </div>
+    </div>`;
+  }).join('')
+  : '<div class="vazio">Nada para produzir no momento.</div>';
+
+  $('pPratos').textContent  = grupos.reduce((t,x) => t + x.total, 0);
+  $('pTipos').textContent   = grupos.length;
+  $('pPedidos').textContent = abertos.length;
 }
 
 function card(p){
@@ -287,6 +375,13 @@ setInterval(() => {
       el.classList.remove('t-verde','t-amarelo','t-vermelho');
       el.classList.add(faixa(s));
     }
+  });
+  document.querySelectorAll('.prod').forEach(el => {
+    const s = Math.max(0, Math.floor((Date.now() - +el.dataset.ini)/1000));
+    const c = el.querySelector('[data-crono]');
+    if (c) c.textContent = mmss(s);
+    el.classList.remove('t-verde','t-amarelo','t-vermelho');
+    el.classList.add(faixa(s));
   });
   document.querySelectorAll('.op-ped').forEach(el => {
     const s = Math.max(0, Math.floor((Date.now() - +el.dataset.ini)/1000));
@@ -400,14 +495,19 @@ $('mais').onclick  = () => ajusta(2);
 $('menos').onclick = () => ajusta(-2);
 
 /* ---- troca de tela ---- */
-$('bCoz').onclick = () => {
-  $('cozinha').style.display='flex'; $('operador').style.display='none';
-  $('bCoz').className='on'; $('bOpe').className='';
-};
-$('bOpe').onclick = () => {
-  $('cozinha').style.display='none'; $('operador').style.display='block';
-  $('bOpe').className='on'; $('bCoz').className='';
-};
+function tela(qual){
+  $('producao').style.display = qual==='prod' ? 'flex' : 'none';
+  $('cozinha').style.display  = qual==='coz'  ? 'flex' : 'none';
+  $('operador').style.display = qual==='ope'  ? 'block': 'none';
+  $('bProd').className = qual==='prod' ? 'on' : '';
+  $('bCoz').className  = qual==='coz'  ? 'on' : '';
+  $('bOpe').className  = qual==='ope'  ? 'on' : '';
+  try{ localStorage.setItem('kds_tela', qual); }catch(e){}
+}
+$('bProd').onclick = () => tela('prod');
+$('bCoz').onclick  = () => tela('coz');
+$('bOpe').onclick  = () => tela('ope');
+try{ tela(localStorage.getItem('kds_tela') || 'prod'); }catch(e){ tela('prod'); }
 
 /* ============ TEMPO REAL ============ */
 sb.channel('kds')
